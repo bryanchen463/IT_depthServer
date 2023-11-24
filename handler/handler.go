@@ -17,8 +17,7 @@ import (
 
 type MessgeHandler interface {
 	OnWsMessage(conn net.Conn, messageType int, message []byte) error
-	OnUnSubscribeMessage(conn net.Conn, msg *pub.UnsubReq) error
-	OnSubscribeMessage(conn net.Conn, msg *pub.SubReq) error
+	OnMessage(conn net.Conn, msg []byte, url string, exchange common.ExchangeID) error
 }
 
 type SubscribeInfo struct {
@@ -46,6 +45,11 @@ type DefaultHandler struct {
 	ExchangeID common.ExchangeID
 	codec      codec.CodecInterface
 	wsConns    sync.Map
+}
+
+// OnMessage implements MessgeHandler.
+func (*DefaultHandler) OnMessage(conn net.Conn, msg []byte, url string, exchange common.ExchangeID) error {
+	panic("unimplemented")
 }
 
 // OnWsMessage implements MessgeHandler.

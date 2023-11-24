@@ -3,23 +3,21 @@ package itdepthserver
 import (
 	"context"
 	"errors"
-	"net"
+	"strings"
 	"sync"
+	"time"
 
-	"github.com/bryanchen463/IT_depthServer/codec"
 	"github.com/bryanchen463/IT_depthServer/handler"
-	pub "github.com/bryanchen463/IT_depthServer/message"
 	"github.com/bryanchen463/IT_depthServer/proxy"
+	"github.com/gorilla/websocket"
 	"github.com/panjf2000/gnet/v2"
+	"github.com/valyala/fasthttp"
 	"github.com/xh23123/IT_hftcommon/pkg/common"
-	"google.golang.org/protobuf/proto"
+	"github.com/xh23123/IT_hftcommon/pkg/crexServer/codec"
+	"github.com/xh23123/IT_hftcommon/pkg/crexServer/codec/message"
+	"github.com/xh23123/IT_hftcommon/pkg/crexServer/logger"
+	"go.uber.org/zap"
 )
-
-var pubReqPool = sync.Pool{
-	New: func() interface{} {
-		return &pub.Req{}
-	},
-}
 
 type noCopy struct{}
 
@@ -31,52 +29,217 @@ type Conn interface {
 	Shutdown() error
 }
 
+const (
+	defaultReadBufferSize  = 4096
+	defaultWriteBufferSize = 4096
+)
+
+var proxyRspPoll = sync.Pool{
+	New: func() any {
+		return &message.ProxyRsp{
+			Message: new(message.Message),
+		}
+	},
+}
+
+var websocketPushPool = sync.Pool{
+	New: func() any {
+		return &message.WebsocketPushMessage{}
+	},
+}
+
+var HttpClient = &fasthttp.Client{
+	NoDefaultUserAgentHeader: true, // Don't send: User-Agent: fasthttp
+	MaxConnsPerHost:          100,
+	ReadBufferSize:           defaultReadBufferSize,  // Make sure to set this big enough that your whole request can be read at once.
+	WriteBufferSize:          defaultWriteBufferSize, // Same but for your response.
+	ReadTimeout:              8 * time.Second,
+	WriteTimeout:             8 * time.Second,
+	MaxIdleConnDuration:      30 * time.Second,
+
+	DisableHeaderNamesNormalizing: true, // If you set the case on your headers correctly you can enable this.
+}
+
+type HttpConn struct {
+	noCopy
+	c          gnet.Conn
+	codec      codec.CodecInterface
+	httpClient *fasthttp.Client
+}
+
+func NewHttpConn(c gnet.Conn, codec codec.CodecInterface) *HttpConn {
+	return &HttpConn{
+		c:          c,
+		httpClient: &fasthttp.Client{},
+		codec:      codec,
+	}
+}
+
+func handleHttpReq(ctx context.Context, httpRequest *message.HttpReq) (msgResp *message.HttpRsp, err error) {
+	request := fasthttp.AcquireRequest()
+	defer fasthttp.ReleaseRequest(request)
+	for _, headerPair := range httpRequest.GetHeader().GetHeaderPair() {
+		for _, value := range headerPair.Value {
+			request.Header.Add(headerPair.Key, value)
+		}
+	}
+	request.AppendBody([]byte(httpRequest.GetBody()))
+	request.SetRequestURI(httpRequest.GetUrl())
+	request.Header.SetMethod(httpRequest.Method)
+
+	if err != nil {
+		return nil, err
+	}
+	httpResp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseResponse(httpResp)
+	err = HttpClient.DoTimeout(request, httpResp, time.Second*2)
+	msgResp = new(message.HttpRsp)
+	if err != nil {
+		msgResp.Error = err.Error()
+		return nil, err
+	}
+	msgResp.Resp = make([]byte, 0, len(httpResp.Body()))
+	msgResp.Resp = append(msgResp.Resp, httpResp.Body()...)
+	msgResp.StatusCode = uint32(httpResp.StatusCode())
+
+	return
+}
+
+func (c *HttpConn) OnMessage(ctx context.Context, req *message.HttpReq) (*message.HttpRsp, error) {
+	return handleHttpReq(ctx, req)
+}
+
+func (c *HttpConn) Shutdown() error {
+
+	return nil
+}
+
 type WebSocketConn struct {
 	noCopy
-	conn           *proxy.Conn
+	conn           gnet.Conn
+	wsConn         *proxy.WebsocketConn
 	isConnect      bool
 	codec          codec.CodecInterface
 	isLittleEndian bool
+	Exchange       common.ExchangeID
+	Url            string
 }
 
 func NewWebSocketConn(conn gnet.Conn, codec codec.CodecInterface, isLittleEndian bool) *WebSocketConn {
 	return &WebSocketConn{
-		conn: &proxy.Conn{
-			C: conn,
-		},
+		conn:           conn,
 		codec:          codec,
 		isLittleEndian: isLittleEndian,
 	}
 }
 
-func (c *WebSocketConn) OnMessage(ctx context.Context, conn net.Conn, data []byte) ([]byte, error) {
-	req := pubReqPool.Get().(*pub.Req)
-	defer pubReqPool.Put(req)
-	req.Reset()
-	err := proto.Unmarshal(data, req)
+func getExchangId(url string) common.ExchangeID {
+	if strings.Count(url, "bybit") > 0 {
+		return common.BYBIT
+	}
+	return ""
+}
+
+func (c *WebSocketConn) OnMessage(ctx context.Context, websocketStartReq *message.WebsocketStartReq) (*message.WebsocketStartRsp, error) {
+	exchangeId := getExchangId(websocketStartReq.Url)
+	if exchangeId == "" {
+		return nil, errors.New("exchange not support")
+	}
+	c.Exchange = exchangeId
+	c.Url = websocketStartReq.Url
+	// websocketConn, err := proxy.WebsocketStartRequest(websocketStartReq.Url, exchangeId)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// c.wsConn = websocketConn.(*proxy.WebsocketConn)
+	c.isConnect = true
+	var websocketStartResp message.WebsocketStartRsp
+	// go c.Forward()
+	return &websocketStartResp, nil
+}
+
+func clear(proxyRsp *message.ProxyRsp) {
+	proxyRsp.Code = 0
+	proxyRsp.Type = 0
+	proxyRsp.Error = ""
+	proxyRsp.Seq = 0
+}
+
+func (c *WebSocketConn) forwardWsPushMessage(content []byte, messageType uint32) error {
+	proxyRsp := proxyRspPoll.Get().(*message.ProxyRsp)
+	defer proxyRspPoll.Put(proxyRsp)
+	clear(proxyRsp)
+	proxyRsp.Type = message.Reqtype_WEBSOCKETPUSH
+	messagePush := websocketPushPool.Get().(*message.WebsocketPushMessage)
+	defer websocketPushPool.Put(messagePush)
+	messagePush.Reset()
+	messagePush.MessageType = messageType
+	messagePush.Message = content
+
+	proxyRsp.Message.Body = &message.Message_WebsocketPushMessage{WebsocketPushMessage: messagePush}
+	rsp, err := c.codec.Encode(proxyRsp, c.isLittleEndian)
+	if err != nil {
+		logger.Error("Encode", zap.Error(err))
+		return err
+	}
+	err = send(c.conn, rsp)
+	if err != nil {
+		logger.Error("send", zap.Error(err))
+		return err
+	}
+	return nil
+}
+
+func (c *WebSocketConn) Forward() {
+	var err error
+	var proxyRsp message.ProxyRsp
+	proxyRsp.Type = message.Reqtype_WEBSOCKETPUSH
+	defer func() {
+		c.wsConn.Close()
+	}()
+	c.wsConn.SetPongHandler(func(appData string) error {
+		return c.forwardWsPushMessage([]byte(appData), websocket.PongMessage)
+	})
+
+	c.wsConn.SetPingHandler(func(appData string) error {
+		return c.forwardWsPushMessage([]byte(appData), websocket.PingMessage)
+	})
+	for {
+		var messageType int
+		var msg []byte
+		messageType, msg, err = c.wsConn.ReadMsg()
+		if err != nil {
+			logger.Error("Forward failed", zap.Error(err))
+			return
+		}
+		logger.Info("Forward", zap.String("message", string(msg)), zap.Int("type", messageType))
+		err = c.forwardWsPushMessage(msg, uint32(messageType))
+		if err != nil {
+			logger.Error("Forward Write failed", zap.Error(err))
+			return
+		}
+	}
+}
+
+func (c *WebSocketConn) WriteMessage(ctx context.Context, WebsocketWriteReq *message.WebsocketWriteReq) (*message.WebsocketWriteRsp, error) {
+	if c.wsConn == nil {
+		return nil, errors.New("websocket not ready")
+	}
+
+	err := c.wsConn.WebsocketWriteRequest(int(WebsocketWriteReq.MessageType), WebsocketWriteReq.Message)
 	if err != nil {
 		return nil, err
 	}
-	if subReq := req.GetSub(); subReq != nil {
-		handler := handler.GetHandler(common.ExchangeID(subReq.Exchange))
-		if handler == nil {
-			return []byte(""), errors.New("handler not found")
-		}
-		err := handler.OnSubscribeMessage(conn, subReq)
-		if err != nil {
-			return []byte(""), err
-		}
-	} else if unsubReq := req.GetUnsub(); unsubReq != nil {
-		handler := handler.GetHandler(common.ExchangeID(unsubReq.Exchange))
-		if handler == nil {
-			return []byte(""), errors.New("handler not found")
-		}
-		err := handler.OnUnSubscribeMessage(conn, unsubReq)
-		if err != nil {
-			return []byte(""), err
-		}
-	} else if proxyReq := req.GetHeartbeat(); proxyReq != nil {
-		return []byte(""), nil
+
+	var websocketWriteRsp message.WebsocketWriteRsp
+	handler := handler.GetHandler(c.Exchange)
+	err = handler.OnMessage(c.conn, WebsocketWriteReq.Message, c.Url, c.Exchange)
+	if err != nil {
+		return nil, err
 	}
-	return []byte(""), errors.New("req type not found")
+	return &websocketWriteRsp, nil
+}
+
+func (c *WebSocketConn) Close() {
+	c.wsConn.Close()
 }

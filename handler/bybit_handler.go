@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/bryanchen463/IT_depthServer/codec"
-	pub "github.com/bryanchen463/IT_depthServer/message"
 	"github.com/bryanchen463/IT_depthServer/proxy"
 	"github.com/bryanchen463/IT_depthServer/topic"
 	"github.com/gorilla/websocket"
@@ -34,6 +33,21 @@ func NewBybitHandler(exchangeID common.ExchangeID, codec codec.CodecInterface) *
 	return &BybitHandler{
 		DefaultHandler: *NewDefaultHandler(exchangeID, codec),
 	}
+}
+
+func (c *BybitHandler) OnMessage(conn net.Conn, msg []byte, url string, exchange common.ExchangeID) error {
+	var bybitSubscribeMsg BybitSubscribeMsg
+	err := json.Unmarshal(msg, &bybitSubscribeMsg)
+	if err != nil {
+		c.logger.Error("OnSubscribeMessage failed:", err, " msg:", string(msg))
+		return err
+	}
+	if bybitSubscribeMsg.Op == "subscribe" {
+		return c.OnSubscribeMessage(conn, &bybitSubscribeMsg, url, exchange)
+	} else if bybitSubscribeMsg.Op == "unsubscribe" {
+		return c.OnUnSubscribeMessage(conn, &bybitSubscribeMsg, url, exchange)
+	}
+	return nil
 }
 
 func (c *BybitHandler) onWsMessage(message []byte, messageType uint32, ex *topic.ExchangeBybit) error {
@@ -114,15 +128,9 @@ func (o *BybitHandler) GetOrderBook(symbol string, ex topic.ExchangeBybit) (stri
 	return string(v), nil
 }
 
-func (h *BybitHandler) OnSubscribeMessage(conn net.Conn, subReq *pub.SubReq) error {
-	var bybitSubscribeMsg BybitSubscribeMsg
-	err := json.Unmarshal([]byte(subReq.Args), &bybitSubscribeMsg)
-	if err != nil {
-		h.logger.Error("OnSubscribeMessage failed:", err, " msg:", subReq.Args)
-		return err
-	}
+func (h *BybitHandler) OnSubscribeMessage(conn net.Conn, bybitSubscribeMsg *BybitSubscribeMsg, url string, exchange common.ExchangeID) error {
 	args := make([]string, len(bybitSubscribeMsg.Args))
-	exchangeConn, isCreate, err := h.getWsConn(subReq.Url, strings.ToLower(subReq.Exchange.String()), true)
+	exchangeConn, isCreate, err := h.getWsConn(url, string(exchange), true)
 	if err != nil {
 		return err
 	}
@@ -151,19 +159,13 @@ func (h *BybitHandler) OnSubscribeMessage(conn net.Conn, subReq *pub.SubReq) err
 	return exchangeConn.Conn.WriteJSON(bybitSubscribeMsg)
 }
 
-func (h *BybitHandler) OnUnSubscribeMessage(conn net.Conn, unsubReq *pub.UnsubReq) error {
-	var bybitSubscribeMsg BybitSubscribeMsg
-	err := json.Unmarshal([]byte(unsubReq.GetArgs()), &bybitSubscribeMsg)
-	if err != nil {
-		h.logger.Error("OnSubscribeMessage failed:", err, " msg:", unsubReq.GetArgs())
-		return err
-	}
+func (h *BybitHandler) OnUnSubscribeMessage(conn net.Conn, bybitSubscribeMsg *BybitSubscribeMsg, url string, exchange common.ExchangeID) error {
 	args := make([]string, len(bybitSubscribeMsg.Args))
 	if len(args) == 0 {
 		return nil
 	}
 	bybitSubscribeMsg.Args = args
-	websocketConn, _, err := h.getWsConn(unsubReq.Url, strings.ToLower(unsubReq.Exchange.String()), false)
+	websocketConn, _, err := h.getWsConn(url, string(exchange), false)
 	if err != nil {
 		h.logger.Error("getWsConn failed:", err)
 		return err
