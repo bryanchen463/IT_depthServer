@@ -24,15 +24,13 @@ require (
 require (
 	github.com/bytedance/sonic v1.10.2
 	github.com/gorilla/websocket v1.5.0
-	github.com/orcaman/concurrent-map v1.0.0 // indirect
+	github.com/orcaman/concurrent-map v1.0.0
 	github.com/silenceper/pool v1.0.0
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.50.0
-	github.com/valyala/fastjson v1.6.4
 	github.com/xh23123/IT_hftcommon v0.0.81
-	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
-	go.uber.org/zap v1.25.0 // indirect
+	go.uber.org/zap v1.25.0
 	golang.org/x/sync v0.3.0 // indirect
 	golang.org/x/sys v0.12.0 // indirect
 	google.golang.org/protobuf v1.31.0

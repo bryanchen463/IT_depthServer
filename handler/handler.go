@@ -7,7 +7,6 @@ import (
 
 	"github.com/bryanchen463/IT_depthServer/codec"
 	"github.com/bryanchen463/IT_depthServer/logger"
-	pub "github.com/bryanchen463/IT_depthServer/message"
 	"github.com/bryanchen463/IT_depthServer/proxy"
 	"github.com/bryanchen463/IT_depthServer/topic"
 	"github.com/gorilla/websocket"
@@ -61,6 +60,7 @@ func NewDefaultHandler(exchangeID common.ExchangeID, codec codec.CodecInterface)
 	res := &DefaultHandler{
 		ExchangeID: exchangeID,
 		codec:      codec,
+		logger:     common.Logger,
 	}
 	return res
 }
@@ -80,14 +80,6 @@ func (h *DefaultHandler) getWsConn(url string, exchang string, needCreate bool) 
 	exchangeConn := &ExchangeConn{Conn: websocketConn, Exchange: topic.NewExchangeBybit()}
 	h.wsConns.Store(url, exchangeConn)
 	return exchangeConn, true, nil
-}
-
-func (h *DefaultHandler) OnSubscribeMessage(conn net.Conn, subReq *pub.SubReq) error {
-	panic("implement me")
-}
-
-func (h *DefaultHandler) OnUnSubscribeMessage(conn net.Conn, unsubReq *pub.UnsubReq) error {
-	panic("implement me")
 }
 
 func (c *DefaultHandler) Stop() {

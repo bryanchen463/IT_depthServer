@@ -19,7 +19,6 @@ func RemoveElements[T comparable](slice []T, indicesToRemove []int) []T {
 }
 
 func RemoveElement[T comparable](slice []T, item T) []T {
-
 	for index, v := range slice {
 		if v == item {
 			slice = append(slice[:index], slice[index+1:]...)

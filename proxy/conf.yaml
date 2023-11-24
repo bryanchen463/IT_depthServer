@@ -1,6 +1,6 @@
 
-# exchanges:
-#   - name: bybit
-#     addresses:
-#     - ip: 52.195.212.238
-#       port: 8090
+exchanges:
+  - name: bybit
+    addresses:
+    - ip: 52.195.212.238
+      port: 8090

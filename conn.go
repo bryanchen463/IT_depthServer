@@ -7,13 +7,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bryanchen463/IT_depthServer/codec"
 	"github.com/bryanchen463/IT_depthServer/handler"
 	"github.com/bryanchen463/IT_depthServer/proxy"
-	"github.com/gorilla/websocket"
 	"github.com/panjf2000/gnet/v2"
 	"github.com/valyala/fasthttp"
 	"github.com/xh23123/IT_hftcommon/pkg/common"
-	"github.com/xh23123/IT_hftcommon/pkg/crexServer/codec"
 	"github.com/xh23123/IT_hftcommon/pkg/crexServer/codec/message"
 	"github.com/xh23123/IT_hftcommon/pkg/crexServer/logger"
 	"go.uber.org/zap"
@@ -116,8 +115,7 @@ func (c *HttpConn) Shutdown() error {
 
 type WebSocketConn struct {
 	noCopy
-	conn           gnet.Conn
-	wsConn         *proxy.WebsocketConn
+	conn           *proxy.Conn
 	isConnect      bool
 	codec          codec.CodecInterface
 	isLittleEndian bool
@@ -127,7 +125,7 @@ type WebSocketConn struct {
 
 func NewWebSocketConn(conn gnet.Conn, codec codec.CodecInterface, isLittleEndian bool) *WebSocketConn {
 	return &WebSocketConn{
-		conn:           conn,
+		conn:           proxy.NewConn(conn, codec),
 		codec:          codec,
 		isLittleEndian: isLittleEndian,
 	}
@@ -177,7 +175,7 @@ func (c *WebSocketConn) forwardWsPushMessage(content []byte, messageType uint32)
 	messagePush.Message = content
 
 	proxyRsp.Message.Body = &message.Message_WebsocketPushMessage{WebsocketPushMessage: messagePush}
-	rsp, err := c.codec.Encode(proxyRsp, c.isLittleEndian)
+	rsp, err := c.codec.Encode(proxyRsp)
 	if err != nil {
 		logger.Error("Encode", zap.Error(err))
 		return err
@@ -190,56 +188,12 @@ func (c *WebSocketConn) forwardWsPushMessage(content []byte, messageType uint32)
 	return nil
 }
 
-func (c *WebSocketConn) Forward() {
-	var err error
-	var proxyRsp message.ProxyRsp
-	proxyRsp.Type = message.Reqtype_WEBSOCKETPUSH
-	defer func() {
-		c.wsConn.Close()
-	}()
-	c.wsConn.SetPongHandler(func(appData string) error {
-		return c.forwardWsPushMessage([]byte(appData), websocket.PongMessage)
-	})
-
-	c.wsConn.SetPingHandler(func(appData string) error {
-		return c.forwardWsPushMessage([]byte(appData), websocket.PingMessage)
-	})
-	for {
-		var messageType int
-		var msg []byte
-		messageType, msg, err = c.wsConn.ReadMsg()
-		if err != nil {
-			logger.Error("Forward failed", zap.Error(err))
-			return
-		}
-		logger.Info("Forward", zap.String("message", string(msg)), zap.Int("type", messageType))
-		err = c.forwardWsPushMessage(msg, uint32(messageType))
-		if err != nil {
-			logger.Error("Forward Write failed", zap.Error(err))
-			return
-		}
-	}
-}
-
 func (c *WebSocketConn) WriteMessage(ctx context.Context, WebsocketWriteReq *message.WebsocketWriteReq) (*message.WebsocketWriteRsp, error) {
-	if c.wsConn == nil {
-		return nil, errors.New("websocket not ready")
-	}
-
-	err := c.wsConn.WebsocketWriteRequest(int(WebsocketWriteReq.MessageType), WebsocketWriteReq.Message)
-	if err != nil {
-		return nil, err
-	}
-
 	var websocketWriteRsp message.WebsocketWriteRsp
 	handler := handler.GetHandler(c.Exchange)
-	err = handler.OnMessage(c.conn, WebsocketWriteReq.Message, c.Url, c.Exchange)
+	err := handler.OnMessage(c.conn, WebsocketWriteReq.Message, c.Url, c.Exchange)
 	if err != nil {
 		return nil, err
 	}
 	return &websocketWriteRsp, nil
-}
-
-func (c *WebSocketConn) Close() {
-	c.wsConn.Close()
 }

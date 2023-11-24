@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/bryanchen463/IT_depthServer/codec"
-	pub "github.com/bryanchen463/IT_depthServer/message"
 	"github.com/gorilla/websocket"
 	"github.com/xh23123/IT_hftcommon/pkg/common"
 	"github.com/xh23123/IT_hftcommon/pkg/crexServer/codec/message"
@@ -42,6 +41,11 @@ func Dial(addr string, timeout time.Duration) (*Conn, error) {
 	return &conn, nil
 }
 
+func NewConn(c net.Conn, codec codec.CodecInterface) *Conn {
+	conn := Conn{C: c, Codec: codec}
+	return &conn
+}
+
 func setNoDelay(conn net.Conn) error {
 	switch conn := conn.(type) {
 	case *net.TCPConn:
@@ -56,21 +60,42 @@ func setNoDelay(conn net.Conn) error {
 	}
 }
 
-var pushPool = sync.Pool{
-	New: func() interface{} {
-		return &pub.Rsp{
-			Rsp: &pub.Rsp_Push{},
+var proxyRspPoll = sync.Pool{
+	New: func() any {
+		return &message.ProxyRsp{
+			Message: new(message.Message),
 		}
 	},
 }
 
-func (c *Conn) ForwardWsPushMessage(messageType uint32, content []byte) error {
-	pushRsp := pushPool.Get().(*pub.Rsp)
-	defer pushPool.Put(pushRsp)
+var websocketPushPool = sync.Pool{
+	New: func() any {
+		return &message.WebsocketPushMessage{}
+	},
+}
 
-	pushRsp.Rsp = &pub.Rsp_Push{Push: &pub.PushMsg{MeessageType: messageType, Data: content}}
-	rsp, err := c.Codec.Encode(pushRsp)
+func clear(proxyRsp *message.ProxyRsp) {
+	proxyRsp.Code = 0
+	proxyRsp.Type = 0
+	proxyRsp.Error = ""
+	proxyRsp.Seq = 0
+}
+
+func (c *Conn) ForwardWsPushMessage(messageType uint32, content []byte) error {
+	proxyRsp := proxyRspPoll.Get().(*message.ProxyRsp)
+	defer proxyRspPoll.Put(proxyRsp)
+	clear(proxyRsp)
+	proxyRsp.Type = message.Reqtype_WEBSOCKETPUSH
+	messagePush := websocketPushPool.Get().(*message.WebsocketPushMessage)
+	defer websocketPushPool.Put(messagePush)
+	messagePush.Reset()
+	messagePush.MessageType = messageType
+	messagePush.Message = content
+
+	proxyRsp.Message.Body = &message.Message_WebsocketPushMessage{WebsocketPushMessage: messagePush}
+	rsp, err := c.Codec.Encode(proxyRsp)
 	if err != nil {
+		common.Logger.Error("Encode", zap.Error(err))
 		return err
 	}
 	_, err = c.Write(rsp)

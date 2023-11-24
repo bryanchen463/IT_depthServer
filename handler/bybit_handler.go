@@ -11,12 +11,13 @@ import (
 	"github.com/bryanchen463/IT_depthServer/topic"
 	"github.com/gorilla/websocket"
 	"github.com/xh23123/IT_hftcommon/pkg/common"
+	"go.uber.org/zap"
 )
 
 type BybitSubscribeMsg struct {
-	ReqId string   `json:"req_id"`
-	Op    string   `json:"op"`
-	Args  []string `json:"args"`
+	ReqId string        `json:"req_id"`
+	Op    string        `json:"op"`
+	Args  []interface{} `json:"args"`
 }
 
 func init() {
@@ -39,7 +40,7 @@ func (c *BybitHandler) OnMessage(conn net.Conn, msg []byte, url string, exchange
 	var bybitSubscribeMsg BybitSubscribeMsg
 	err := json.Unmarshal(msg, &bybitSubscribeMsg)
 	if err != nil {
-		c.logger.Error("OnSubscribeMessage failed:", err, " msg:", string(msg))
+		c.logger.Error("OnSubscribeMessage failed:", zap.Error(err), zap.String(" msg:", string(msg)))
 		return err
 	}
 	if bybitSubscribeMsg.Op == "subscribe" {
@@ -129,7 +130,7 @@ func (o *BybitHandler) GetOrderBook(symbol string, ex topic.ExchangeBybit) (stri
 }
 
 func (h *BybitHandler) OnSubscribeMessage(conn net.Conn, bybitSubscribeMsg *BybitSubscribeMsg, url string, exchange common.ExchangeID) error {
-	args := make([]string, len(bybitSubscribeMsg.Args))
+	args := make([]interface{}, len(bybitSubscribeMsg.Args))
 	exchangeConn, isCreate, err := h.getWsConn(url, string(exchange), true)
 	if err != nil {
 		return err
@@ -140,13 +141,14 @@ func (h *BybitHandler) OnSubscribeMessage(conn net.Conn, bybitSubscribeMsg *Bybi
 		})
 	} else {
 		for _, ch := range bybitSubscribeMsg.Args {
-			create, err := exchangeConn.Exchange.(*topic.ExchangeBybit).AddConn(conn.(*proxy.Conn), ch)
+			channel := ch.(string)
+			create, err := exchangeConn.Exchange.(*topic.ExchangeBybit).AddConn(conn.(*proxy.Conn), channel)
 			if err != nil {
-				h.logger.Error("AddConn failed:", err)
+				h.logger.Error("AddConn failed:", zap.Error(err))
 				return err
 			}
 			if create {
-				args = append(args, ch)
+				args = append(args, channel)
 			}
 		}
 		exchangeConn.Exchange.(*topic.ExchangeBybit).AddConn(conn.(*proxy.Conn), "ping")
@@ -160,18 +162,18 @@ func (h *BybitHandler) OnSubscribeMessage(conn net.Conn, bybitSubscribeMsg *Bybi
 }
 
 func (h *BybitHandler) OnUnSubscribeMessage(conn net.Conn, bybitSubscribeMsg *BybitSubscribeMsg, url string, exchange common.ExchangeID) error {
-	args := make([]string, len(bybitSubscribeMsg.Args))
+	args := make([]interface{}, len(bybitSubscribeMsg.Args))
 	if len(args) == 0 {
 		return nil
 	}
 	bybitSubscribeMsg.Args = args
 	websocketConn, _, err := h.getWsConn(url, string(exchange), false)
 	if err != nil {
-		h.logger.Error("getWsConn failed:", err)
+		h.logger.Error("getWsConn failed:", zap.Error(err))
 		return err
 	}
 	for _, ch := range bybitSubscribeMsg.Args {
-		t := websocketConn.Exchange.(*topic.ExchangeBybit).ParseTopic(ch)
+		t := websocketConn.Exchange.(*topic.ExchangeBybit).ParseTopic(ch.(string))
 		if t == nil {
 			return errors.New("ParseTopic failed")
 		}

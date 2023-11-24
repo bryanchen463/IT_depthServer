@@ -1,9 +1,11 @@
 package logger
 
+import "go.uber.org/zap/zapcore"
+
 type Logger interface {
-	Debug(msg string, args ...interface{})
-	Info(msg string, args ...interface{})
-	Warn(msg string, args ...interface{})
-	Error(msg string, args ...interface{})
-	Fatal(msg string, args ...interface{})
+	Debug(msg string, args ...zapcore.Field)
+	Info(msg string, args ...zapcore.Field)
+	Warn(msg string, args ...zapcore.Field)
+	Error(msg string, args ...zapcore.Field)
+	Fatal(msg string, args ...zapcore.Field)
 }

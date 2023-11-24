@@ -5,9 +5,11 @@ import (
 	"net"
 	"time"
 
+	"github.com/bryanchen463/IT_depthServer/codec"
 	"github.com/bryanchen463/IT_depthServer/logger"
 	"github.com/panjf2000/gnet/v2"
-	"github.com/xh23123/IT_hftcommon/pkg/crexServer/codec"
+
+	"github.com/xh23123/IT_hftcommon/pkg/common"
 	"github.com/xh23123/IT_hftcommon/pkg/crexServer/codec/message"
 	"go.uber.org/zap"
 )
@@ -35,7 +37,7 @@ func send(c net.Conn, date []byte) error {
 }
 
 func (h *ServerHandler) response(c gnet.Conn, proxyRsp *message.ProxyRsp) (action gnet.Action) {
-	response, err := h.codec.Encode(proxyRsp, h.isLittleEnd)
+	response, err := h.codec.Encode(proxyRsp)
 	if err != nil {
 		h.logger.Error("onTraffic Marshal", zap.Error(err), zap.String("proxyRsp", proxyRsp.String()))
 		return gnet.Close
@@ -53,12 +55,14 @@ func (*ServerHandler) OnBoot(eng gnet.Engine) (action gnet.Action) {
 }
 
 // OnClose implements gnet.EventHandler.
-func (*ServerHandler) OnClose(c gnet.Conn, err error) (action gnet.Action) {
+func (s *ServerHandler) OnClose(c gnet.Conn, err error) (action gnet.Action) {
+	s.logger.Debug("OnClose", zap.String("addr", c.RemoteAddr().String()))
 	return gnet.None
 }
 
 // OnOpen implements gnet.EventHandler.
-func (*ServerHandler) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
+func (s *ServerHandler) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
+	s.logger.Debug("OnOpen", zap.String("addr", c.RemoteAddr().String()))
 	return nil, gnet.None
 }
 
@@ -76,11 +80,13 @@ func (*ServerHandler) OnTick() (delay time.Duration, action gnet.Action) {
 func (h *ServerHandler) OnTraffic(c gnet.Conn) (action gnet.Action) {
 	messages, err := codec.TryGetMessage(c, h.isLittleEnd)
 	for _, oneMessage := range messages {
+		h.logger.Debug("onTraffic get message", zap.ByteString("msg", oneMessage))
 		if err != nil {
 			h.logger.Error("onTraffic get message failed", zap.Error(err))
 			return gnet.Close
 		}
-		msg, err := h.codec.Decode(oneMessage)
+		var msg message.ProxyReq
+		err := h.codec.Decode(oneMessage, &msg)
 		if err != nil {
 			h.logger.Error("OnTraffic", zap.Error(err))
 			return gnet.Close
@@ -170,7 +176,7 @@ func (h *ServerHandler) OnTraffic(c gnet.Conn) (action gnet.Action) {
 }
 
 func Start() {
-	err := gnet.Run(new(ServerHandler), ":9000", gnet.WithTicker(true), gnet.WithLockOSThread(true),
+	err := gnet.Run(&ServerHandler{logger: common.Logger, isLittleEnd: true, codec: codec.NewDefaultCodec(true)}, ":9000", gnet.WithTicker(true), gnet.WithLockOSThread(true),
 		gnet.WithMulticore(true), gnet.WithTCPKeepAlive(time.Minute*1), gnet.WithTCPNoDelay(gnet.TCPNoDelay))
 	if err != nil {
 		panic(err)
