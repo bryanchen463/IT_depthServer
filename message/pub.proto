@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+option go_package="github.com/bryanchen463/IT_depthServer/pub";
+
+enum ExchangeID {
+    INVALID = 0;
+    BINANCEID = 1;
+    OKEXID = 3;
+    COINBASEID = 4;
+    COINEX = 5;
+    BYBIT = 6;
+    ETHEREUMDEX = 7;
+    KRAKEN = 8;
+    MOCKEXCHANGE = 9;
+}
+
+enum Channel {
+    BookTick = 0;
+    Depth = 1;
+    Tick = 2;
+    KlineWs = 3;
+    TradeWs = 4;
+    FutureBookTick = 5;
+    FutureDepth = 6;
+    FutureTick = 7;
+    MarkPrice = 8;
+    FutureKlineWs = 9;
+    FutureAggTrade = 10;
+    CoinFutureBookTick = 11;
+    DexBookTicks = 12;
+    DexTrades = 13;
+    Snap = 14; // forbidden to subscribe, only for push
+}
+
+message SubReq {
+    ExchangeID exchange = 1;
+    string symbol = 2;
+    Channel channel = 3;
+    string url = 4;
+    string args = 5;
+}
+
+message SubRsp {
+    uint32 code = 1;
+    string msg = 2;
+}
+
+message UnsubReq {
+    ExchangeID exchange = 1;
+    string symbol = 2;
+    Channel channel = 3;
+    string url = 4;
+    string args = 5;
+}
+
+message UnsubRsp {
+    uint32 code = 1;
+    string msg = 2;
+}
+
+message PushMsg {
+    uint32 meessageType = 1;
+    bytes data = 2;
+}
+
+message HeartBeat {
+    uint32 timestamp = 1;
+}
+
+message Req {
+    uint32 seq = 1;
+    oneof req {
+        SubReq sub = 2;
+        UnsubReq unsub = 3;
+        HeartBeat heartbeat = 4;
+    }
+}
+
+message Rsp {
+    uint32 seq = 1;
+    oneof rsp {
+        SubRsp sub = 2;
+        UnsubRsp unsub = 3;
+        PushMsg push = 4;
+        HeartBeat heartbeat = 5;
+    }
+}

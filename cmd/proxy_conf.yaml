@@ -1,0 +1,6 @@
+
+exchanges:
+  - name: bybit
+    addresses:
+    - ip: 54.169.152.106 
+      port: 8090
